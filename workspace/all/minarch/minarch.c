@@ -1288,7 +1288,7 @@ static void Config_syncFrontend(char* key, int value) {
 		i = FE_OPT_REWIND_AUDIO;
 	}
 	else if (exactMatch(key,config.frontend.options[FE_OPT_BEZEL].key)) {
-		
+		bezel_enabled = value;
 		Bezel_load();
 		renderer.dst_p = 0;
 		i = FE_OPT_BEZEL;
@@ -3261,7 +3261,9 @@ static void video_refresh_callback_main(const void *data, unsigned width, unsign
 	
 	GFX_blitRenderer(&renderer);
 	
-
+	if (bezel_surface != NULL && bezel_enabled) {
+		SDL_BlitSurface(bezel_surface, NULL, screen, NULL);
+	}
 	
 	if (!thread_video) GFX_flip(screen);
 	last_flip_time = SDL_GetTicks();

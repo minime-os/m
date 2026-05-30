@@ -1,3 +1,4 @@
+#define _GNU_SOURCE // for strcasestr
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,12 +21,16 @@ int suffixMatch(char* suf, char* str) {
 	return (offset>=0 && strncasecmp(suf, str+offset, len)==0);
 }
 int exactMatch(char* str1, char* str2) {
+	if (!str1 || !str2) return 0; // NULL isn't safe here
 	int len1 = strlen(str1);
 	if (len1!=strlen(str2)) return 0;
 	return (strncmp(str1,str2,len1)==0);
 }
+int containsString(char* haystack, char* needle) {
+	return strcasestr(haystack, needle) != NULL;
+}
 int hide(char* file_name) {
-	return file_name[0]=='.' || suffixMatch(".disabled", file_name);
+	return file_name[0]=='.' || suffixMatch(".disabled", file_name) || exactMatch("map.txt", file_name);
 }
 
 void getDisplayName(const char* in_name, char* out_name) {
@@ -46,7 +51,7 @@ void getDisplayName(const char* in_name, char* out_name) {
 	// remove extension(s), eg. .p8.png
 	while ((tmp = strrchr(out_name, '.'))!=NULL) {
 		int len = strlen(tmp);
-		if (len>2 && len<=4) tmp[0] = '\0'; // 3 letter extension plus dot
+		if (len>2 && len<=5) tmp[0] = '\0'; // 1-4 letter extension plus dot (was 1-3, extended for .doom files)
 		else break;
 	}
 	
@@ -71,21 +76,29 @@ void getEmuName(const char* in_name, char* out_name) { // NOTE: both char arrays
 	strcpy(out_name, in_name);
 	tmp = out_name;
 	
+	// printf("--------\n  in_name: %s\n",in_name); fflush(stdout);
+	
 	// extract just the Roms folder name if necessary
 	if (prefixMatch(ROMS_PATH, tmp)) {
 		tmp += strlen(ROMS_PATH) + 1;
 		char* tmp2 = strchr(tmp, '/');
 		if (tmp2) tmp2[0] = '\0';
+		// printf("    tmp1: %s\n", tmp);
+		strcpy(out_name, tmp);
+		tmp = out_name;
 	}
 
 	// finally extract pak name from parenths if present
 	tmp = strrchr(tmp, '(');
 	if (tmp) {
 		tmp += 1;
+		// printf("    tmp2: %s\n", tmp);
 		strcpy(out_name, tmp);
 		tmp = strchr(out_name,')');
 		tmp[0] = '\0';
 	}
+	
+	// printf(" out_name: %s\n", out_name); fflush(stdout);
 }
 void getEmuPath(char* emu_name, char* pak_path) {
 	sprintf(pak_path, "%s/Emus/%s/%s.pak/launch.sh", SDCARD_PATH, PLATFORM, emu_name);

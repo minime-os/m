@@ -22,7 +22,9 @@ void LOG_note(int level, const char* fmt, ...);
 ///////////////////////////////
 
 #define PAGE_COUNT	2
+#ifndef PAGE_SCALE
 #define PAGE_SCALE	3
+#endif
 #define PAGE_WIDTH	(FIXED_WIDTH * PAGE_SCALE)
 #define PAGE_HEIGHT	(FIXED_HEIGHT * PAGE_SCALE)
 #define PAGE_PITCH	(PAGE_WIDTH * FIXED_BPP)
@@ -47,6 +49,10 @@ void LOG_note(int level, const char* fmt, ...);
 
 ///////////////////////////////
 
+#define FALLBACK_IMPLEMENTATION __attribute__((weak)) // used if platform doesn't provide an implementation
+
+///////////////////////////////
+
 extern uint32_t RGB_WHITE;
 extern uint32_t RGB_BLACK;
 extern uint32_t RGB_LIGHT_GRAY;
@@ -67,6 +73,7 @@ enum {
 	ASSET_BAR_BG_MENU,
 	ASSET_UNDERLINE,
 	ASSET_DOT,
+	ASSET_HOLE,
 	
 	ASSET_COLORS,
 	
@@ -83,6 +90,8 @@ enum {
 	ASSET_SCROLL_DOWN,
 	
 	ASSET_WIFI,
+	
+	ASSET_COUNT,
 };
 
 typedef struct GFX_Fonts {
@@ -93,12 +102,27 @@ typedef struct GFX_Fonts {
 } GFX_Fonts;
 extern GFX_Fonts font;
 
+enum {
+	SHARPNESS_SHARP,
+	SHARPNESS_CRISP,
+	SHARPNESS_SOFT,
+};
+
+enum {
+	EFFECT_NONE,
+	EFFECT_LINE,
+	EFFECT_GRID,
+	EFFECT_COUNT,
+};
+
 typedef struct GFX_Renderer {
 	void* src;
 	void* dst;
 	void* blit;
+	double aspect; // 0 for integer, -1 for fullscreen, otherwise aspect ratio, used for SDL2 accelerated scaling
 	int scale;
 	
+	// TODO: document this better
 	int true_w;
 	int true_h;
 
@@ -108,6 +132,7 @@ typedef struct GFX_Renderer {
 	int src_h;
 	int src_p;
 	
+	// TODO: I think this is overscaled
 	int dst_x;
 	int dst_y;
 	int dst_w;
@@ -124,6 +149,9 @@ SDL_Surface* GFX_init(int mode);
 #define GFX_resize PLAT_resizeVideo // (int w, int h, int pitch);
 #define GFX_setScaleClip PLAT_setVideoScaleClip // (int x, int y, int width, int height)
 #define GFX_setNearestNeighbor PLAT_setNearestNeighbor // (int enabled)
+#define GFX_setSharpness PLAT_setSharpness // (int sharpness)
+#define GFX_setEffectColor PLAT_setEffectColor // (int color)
+#define GFX_setEffect PLAT_setEffect // (int effect)
 void GFX_setMode(int mode);
 int GFX_hdmiChanged(void);
 
@@ -132,6 +160,7 @@ int GFX_hdmiChanged(void);
 
 void GFX_startFrame(void);
 void GFX_flip(SDL_Surface* screen);
+#define GFX_supportsOverscan PLAT_supportsOverscan // (void)
 void GFX_sync(void); // call this to maintain 60fps when not calling GFX_flip() this frame
 void GFX_quit(void);
 
@@ -182,9 +211,47 @@ void SND_quit(void);
 
 ///////////////////////////////
 
+typedef struct LID_Context {
+	int has_lid;
+	int is_open;
+} LID_Context;
+extern LID_Context lid;
+
+void PLAT_initLid(void);
+int PLAT_lidChanged(int* state);
+
+///////////////////////////////
+
+typedef struct PAD_Axis {
+		int x;
+		int y;
+} PAD_Axis;
+typedef struct PAD_Context {
+	int is_pressed;
+	int just_pressed;
+	int just_released;
+	int just_repeated;
+	uint32_t repeat_at[BTN_ID_COUNT];
+	PAD_Axis laxis;
+	PAD_Axis raxis;
+} PAD_Context;
+extern PAD_Context pad;
+
+#define PAD_REPEAT_DELAY	300
+#define PAD_REPEAT_INTERVAL 100
+
+#define PAD_init PLAT_initInput
+#define PAD_quit PLAT_quitInput
+#define PAD_poll PLAT_pollInput
+#define PAD_wake PLAT_shouldWake
+
+void PAD_setAnalog(int neg, int pos, int value, int repeat_at); // internal
+
 void PAD_reset(void);
-void PAD_poll(void);
+int PAD_anyJustPressed(void);
 int PAD_anyPressed(void);
+int PAD_anyJustReleased(void);
+
 int PAD_justPressed(int btn);
 int PAD_isPressed(int btn);
 int PAD_justReleased(int btn);
@@ -202,6 +269,21 @@ void VIB_setStrength(int strength);
 ///////////////////////////////
 
 #define BRIGHTNESS_BUTTON_LABEL "+ -" // ew
+
+enum {
+	PWR_TIMEOUT_OFF = 0,
+	PWR_TIMEOUT_1_MIN = 60 * 1000,
+	PWR_TIMEOUT_5_MIN = 5 * 60 * 1000,
+	PWR_TIMEOUT_15_MIN = 15 * 60 * 1000,
+	PWR_TIMEOUT_30_MIN = 30 * 60 * 1000,
+	PWR_TIMEOUT_1_HOUR = 60 * 60 * 1000,
+};
+
+enum {
+	PWR_BEHAVIOR_SLEEP_ONLY = 0,
+	PWR_BEHAVIOR_AUTO_SHUTDOWN,
+	PWR_BEHAVIOR_SHUT_DOWN_NOW,
+};
 
 typedef void (*PWR_callback_t)(void);
 void PWR_init(void);
@@ -223,6 +305,15 @@ void PWR_enableSleep(void);
 void PWR_disableAutosleep(void);
 void PWR_enableAutosleep(void);
 int PWR_preventAutosleep(void);
+int PWR_getSleepTimeoutMs(void);
+int PWR_getAutoShutdownTimeoutMs(void);
+int PWR_getLidBehavior(void);
+int PWR_getPowerButtonBehavior(void);
+int PWR_setSleepTimeoutMs(int timeout_ms);
+int PWR_setAutoShutdownTimeoutMs(int timeout_ms);
+int PWR_setLidBehavior(int behavior);
+int PWR_setPowerButtonBehavior(int behavior);
+void PWR_requestLidAction(void);
 
 int PWR_isCharging(void);
 int PWR_getBattery(void);
@@ -237,6 +328,11 @@ enum {
 
 ///////////////////////////////
 
+void PLAT_initInput(void);
+void PLAT_quitInput(void);
+void PLAT_pollInput(void);
+int PLAT_shouldWake(void);
+
 SDL_Surface* PLAT_initVideo(void);
 void PLAT_quitVideo(void);
 void PLAT_clearVideo(SDL_Surface* screen);
@@ -245,10 +341,14 @@ void PLAT_setVsync(int vsync);
 SDL_Surface* PLAT_resizeVideo(int w, int h, int pitch);
 void PLAT_setVideoScaleClip(int x, int y, int width, int height);
 void PLAT_setNearestNeighbor(int enabled);
+void PLAT_setSharpness(int sharpness);
+void PLAT_setEffectColor(int color);
+void PLAT_setEffect(int effect);
 void PLAT_vsync(int remaining);
 scaler_t PLAT_getScaler(GFX_Renderer* renderer);
 void PLAT_blitRenderer(GFX_Renderer* renderer);
 void PLAT_flip(SDL_Surface* screen, int sync);
+int PLAT_supportsOverscan(void);
 
 SDL_Surface* PLAT_initOverlay(void);
 void PLAT_quitOverlay(void);
@@ -265,5 +365,6 @@ int PLAT_pickSampleRate(int requested, int max);
 
 char* PLAT_getModel(void);
 int PLAT_isOnline(void);
+int PLAT_setDateTime(int y, int m, int d, int h, int i, int s);
 
 #endif

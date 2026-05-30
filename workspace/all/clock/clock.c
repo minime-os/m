@@ -23,6 +23,7 @@ int main(int argc , char* argv[]) {
 	PWR_setCPUSpeed(CPU_SPEED_MENU);
 	
 	SDL_Surface* screen = GFX_init(MODE_MAIN);
+	PAD_init();
 	PWR_init();
 	InitSettings();
 	
@@ -312,17 +313,10 @@ int main(int argc , char* argv[]) {
 	
 	QuitSettings();
 	PWR_quit();
+	PAD_quit();
 	GFX_quit();
 	
-	
-	// TODO: getting and saving time should be part of PLAT_*
-	// TODO: if (seconds_selected==tm.tm_sec) refresh tm and update seconds_selected
-	
-	if (save_changes) {
-		char cmd[512];
-		snprintf(cmd, sizeof(cmd), "date -u -s '%d-%d-%d %d:%d:%d';hwclock --utc -w", year_selected, month_selected, day_selected, hour_selected, minute_selected, seconds_selected);
-		system(cmd);
-	}
+	if (save_changes) PLAT_setDateTime(year_selected, month_selected, day_selected, hour_selected, minute_selected, seconds_selected);
 	
 	return EXIT_SUCCESS;
 }

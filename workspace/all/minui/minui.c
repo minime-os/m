@@ -212,13 +212,78 @@ static void getUniqueName(Entry* entry, char* out_name) {
 }
 
 static void Directory_index(Directory* self) {
-	int skip_index = exactMatch(FAUX_RECENT_PATH, self->path) || prefixMatch(COLLECTIONS_PATH, self->path); // not alphabetized
+	int is_collection = prefixMatch(COLLECTIONS_PATH, self->path);
+	int skip_index = exactMatch(FAUX_RECENT_PATH, self->path) || is_collection; // not alphabetized
+	
+	Hash* map = NULL;
+	char map_path[256];
+	sprintf(map_path, "%s/map.txt", is_collection ? COLLECTIONS_PATH : self->path);
+	if (exists(map_path)) {
+		FILE* file = fopen(map_path, "r");
+		if (file) {
+			map = Hash_new();
+			char line[256];
+			while (fgets(line,256,file)!=NULL) {
+				normalizeNewline(line);
+				trimTrailingNewlines(line);
+				if (strlen(line)==0) continue; // skip empty lines
+
+				char* tmp = strchr(line,'\t');
+				if (tmp) {
+					tmp[0] = '\0';
+					char* key = line;
+					char* value = tmp+1;
+					Hash_set(map, key, value);
+				}
+			}
+			fclose(file);
+			
+			int resort = 0;
+			int filter = 0;
+			for (int i=0; i<self->entries->count; i++) {
+				Entry* entry = self->entries->items[i];
+				char* filename = strrchr(entry->path, '/')+1;
+				char* alias = Hash_get(map, filename);
+				if (alias) {
+					free(entry->name);
+					entry->name = strdup(alias);
+					resort = 1;
+					if (!filter && hide(entry->name)) filter = 1;
+				}
+			}
+			
+			if (filter) {
+				Array* entries = Array_new();
+				for (int i=0; i<self->entries->count; i++) {
+					Entry* entry = self->entries->items[i];
+					if (hide(entry->name)) {
+						Entry_free(entry);
+					}
+					else {
+						Array_push(entries, entry);
+					}
+				}
+				Array_free(self->entries); // not EntryArray_free because we've just moved the entries from the original to the filtered one!
+				self->entries = entries;
+			}
+			if (resort) EntryArray_sort(self->entries);
+		}
+	}
 	
 	Entry* prior = NULL;
 	int alpha = -1;
 	int index = 0;
 	for (int i=0; i<self->entries->count; i++) {
 		Entry* entry = self->entries->items[i];
+		if (map) {
+			char* filename = strrchr(entry->path, '/')+1;
+			char* alias = Hash_get(map, filename);
+			if (alias) {
+				free(entry->name);
+				entry->name = strdup(alias);
+			}
+		}
+		
 		if (prior!=NULL && exactMatch(prior->name, entry->name)) {
 			if (prior->unique) free(prior->unique);
 			if (entry->unique) free(entry->unique);
@@ -252,6 +317,8 @@ static void Directory_index(Directory* self) {
 		
 		prior = entry;
 	}
+	
+	if (map) Hash_free(map);
 }
 
 static Array* getRoot(void);
@@ -273,7 +340,7 @@ static Directory* Directory_new(char* path, int selected) {
 	else if (exactMatch(path, FAUX_RECENT_PATH)) {
 		self->entries = getRecents();
 	}
-	else if (!exactMatch(path, COLLECTIONS_PATH) && prefixMatch(COLLECTIONS_PATH, path)) {
+	else if (!exactMatch(path, COLLECTIONS_PATH) && prefixMatch(COLLECTIONS_PATH, path) && suffixMatch(".txt", path)) {
 		self->entries = getCollection(path);
 	}
 	else if (suffixMatch(".m3u", path)) {
@@ -309,10 +376,14 @@ static void DirectoryArray_free(Array* self) {
 
 typedef struct Recent {
 	char* path; // NOTE: this is without the SDCARD_PATH prefix!
+	char* alias;
 	int available;
 } Recent;
+ // yiiikes
+static char* recent_alias = NULL;
+
 static int hasEmu(char* emu_name);
-static Recent* Recent_new(char* path) {
+static Recent* Recent_new(char* path, char* alias) {
 	Recent* self = malloc(sizeof(Recent));
 
 	char sd_path[256]; // only need to get emu name
@@ -322,11 +393,13 @@ static Recent* Recent_new(char* path) {
 	getEmuName(sd_path, emu_name);
 	
 	self->path = strdup(path);
+	self->alias = alias ? strdup(alias) : NULL;
 	self->available = hasEmu(emu_name);
 	return self;
 }
 static void Recent_free(Recent* self) {
 	free(self->path);
+	if (self->alias) free(self->alias);
 	free(self);
 }
 
@@ -353,6 +426,7 @@ static Array* recents; // RecentArray
 static int quit = 0;
 static int can_resume = 0;
 static int should_resume = 0; // set to 1 on BTN_RESUME but only if can_resume==1
+static int simple_mode = 0;
 static char slot_path[256];
 
 static int restore_depth = -1;
@@ -370,19 +444,23 @@ static void saveRecents(void) {
 		for (int i=0; i<recents->count; i++) {
 			Recent* recent = recents->items[i];
 			fputs(recent->path, file);
+			if (recent->alias) {
+				fputs("\t", file);
+				fputs(recent->alias, file);
+			}
 			putc('\n', file);
 		}
 		fclose(file);
 	}
 }
-static void addRecent(char* path) {
+static void addRecent(char* path, char* alias) {
 	path += strlen(SDCARD_PATH); // makes paths platform agnostic
 	int id = RecentArray_indexOf(recents, path);
 	if (id==-1) { // add
 		while (recents->count>=MAX_RECENTS) {
 			Recent_free(Array_pop(recents));
 		}
-		Array_unshift(recents, Recent_new(path));
+		Array_unshift(recents, Recent_new(path, alias));
 	}
 	else if (id>0) { // bump to top
 		for (int i=id; i>0; i--) {
@@ -438,6 +516,7 @@ static int hasM3u(char* rom_path, char* m3u_path) { // NOTE: rom_path not dir_pa
 }
 
 static int hasRecents(void) {
+	LOG_info("hasRecents %s\n", RECENT_PATH);
 	int has = 0;
 	
 	Array* parent_paths = Array_new();
@@ -446,7 +525,7 @@ static int hasRecents(void) {
 		getFile(CHANGE_DISC_PATH, sd_path, 256);
 		if (exists(sd_path)) {
 			char* disc_path = sd_path + strlen(SDCARD_PATH); // makes path platform agnostic
-			Recent* recent = Recent_new(disc_path);
+			Recent* recent = Recent_new(disc_path, NULL);
 			if (recent->available) has += 1;
 			Array_push(recents, recent);
 		
@@ -467,15 +546,25 @@ static int hasRecents(void) {
 			trimTrailingNewlines(line);
 			if (strlen(line)==0) continue; // skip empty lines
 			
+			// LOG_info("line: %s\n", line);
+			
+			char* path = line;
+			char* alias = NULL;
+			char* tmp = strchr(line,'\t');
+			if (tmp) {
+				tmp[0] = '\0';
+				alias = tmp+1;
+			}
+			
 			char sd_path[256];
-			sprintf(sd_path, "%s%s", SDCARD_PATH, line);
+			sprintf(sd_path, "%s%s", SDCARD_PATH, path);
 			if (exists(sd_path)) {
 				if (recents->count<MAX_RECENTS) {
 					// this logic replaces an existing disc from a multi-disc game with the last used
 					char m3u_path[256];
 					if (hasM3u(sd_path, m3u_path)) { // TODO: this might tank launch speed
 						char parent_path[256];
-						strcpy(parent_path, line);
+						strcpy(parent_path, path);
 						char* tmp = strrchr(parent_path, '/') + 1;
 						tmp[0] = '\0';
 						
@@ -491,7 +580,10 @@ static int hasRecents(void) {
 						
 						Array_push(parent_paths, strdup(parent_path));
 					}
-					Recent* recent = Recent_new(line);
+					
+					// LOG_info("path:%s alias:%s\n", path, alias);
+					
+					Recent* recent = Recent_new(path, alias);
 					if (recent->available) has += 1;
 					Array_push(recents, recent);
 				}
@@ -549,10 +641,8 @@ static Array* getRoot(void) {
 	
 	if (hasRecents()) Array_push(root, Entry_new(FAUX_RECENT_PATH, ENTRY_DIR));
 	
-	DIR *dh;
-	
 	Array* entries = Array_new();
-	dh = opendir(ROMS_PATH);
+	DIR* dh = opendir(ROMS_PATH);
 	if (dh!=NULL) {
 		struct dirent *dp;
 		char* tmp;
@@ -582,6 +672,46 @@ static Array* getRoot(void) {
 		}
 		Array_free(emus); // just free the array part, entries now owns emus entries
 		closedir(dh);
+	}
+	
+	// copied/modded from Directory_index
+	// we don't support hidden remaps here
+	char map_path[256];
+	sprintf(map_path, "%s/map.txt", ROMS_PATH);
+	if (entries->count>0 && exists(map_path)) {
+		FILE* file = fopen(map_path, "r");
+		if (file) {
+			Hash* map = Hash_new();
+			char line[256];
+			while (fgets(line,256,file)!=NULL) {
+				normalizeNewline(line);
+				trimTrailingNewlines(line);
+				if (strlen(line)==0) continue; // skip empty lines
+
+				char* tmp = strchr(line,'\t');
+				if (tmp) {
+					tmp[0] = '\0';
+					char* key = line;
+					char* value = tmp+1;
+					Hash_set(map, key, value);
+				}
+			}
+			fclose(file);
+			
+			int resort = 0;
+			for (int i=0; i<entries->count; i++) {
+				Entry* entry = entries->items[i];
+				char* filename = strrchr(entry->path, '/')+1;
+				char* alias = Hash_get(map, filename);
+				if (alias) {
+					free(entry->name);
+					entry->name = strdup(alias);
+					resort = 1;
+				}
+			} 
+			if (resort) EntryArray_sort(entries);
+			Hash_free(map);
+		}
 	}
 	
 	if (hasCollections()) {
@@ -617,7 +747,7 @@ static Array* getRoot(void) {
 	Array_free(entries); // root now owns entries' entries
 	
 	char* tools_path = SDCARD_PATH "/Tools/" PLATFORM;
-	if (exists(tools_path)) Array_push(root, Entry_new(tools_path, ENTRY_DIR));
+	if (exists(tools_path) && !simple_mode) Array_push(root, Entry_new(tools_path, ENTRY_DIR));
 	
 	return root;
 }
@@ -630,7 +760,12 @@ static Array* getRecents(void) {
 		char sd_path[256];
 		sprintf(sd_path, "%s%s", SDCARD_PATH, recent->path);
 		int type = suffixMatch(".pak", sd_path) ? ENTRY_PAK : ENTRY_ROM; // ???
-		Array_push(entries, Entry_new(sd_path, type));
+		Entry* entry = Entry_new(sd_path, type);
+		if (recent->alias) {
+			free(entry->name);
+			entry->name = strdup(recent->alias);
+		}
+		Array_push(entries, entry);
 	}
 	return entries;
 }
@@ -813,33 +948,38 @@ static void queueNext(char* cmd) {
 	putFile("/tmp/next", cmd);
 	quit = 1;
 }
+
+// based on https://stackoverflow.com/a/31775567/145965
+static int replaceString(char *line, const char *search, const char *replace) {
+   char *sp; // start of pattern
+   if ((sp = strstr(line, search)) == NULL) {
+      return 0;
+   }
+   int count = 1;
+   int sLen = strlen(search);
+   int rLen = strlen(replace);
+   if (sLen > rLen) {
+      // move from right to left
+      char *src = sp + sLen;
+      char *dst = sp + rLen;
+      while((*dst = *src) != '\0') { dst++; src++; }
+   } else if (sLen < rLen) {
+      // move from left to right
+      int tLen = strlen(sp) - sLen;
+      char *stop = sp + rLen;
+      char *src = sp + sLen + tLen;
+      char *dst = sp + rLen + tLen;
+      while(dst >= stop) { *dst = *src; dst--; src--; }
+   }
+   memcpy(sp, replace, rLen);
+   count += replaceString(sp + rLen, search, replace);
+   return count;
+}
 static char* escapeSingleQuotes(char* str) {
-	// based on https://stackoverflow.com/a/31775567/145965
-	int replaceString(char *line, const char *search, const char *replace) {
-	   char *sp; // start of pattern
-	   if ((sp = strstr(line, search)) == NULL) {
-	      return 0;
-	   }
-	   int count = 1;
-	   int sLen = strlen(search);
-	   int rLen = strlen(replace);
-	   if (sLen > rLen) {
-	      // move from right to left
-	      char *src = sp + sLen;
-	      char *dst = sp + rLen;
-	      while((*dst = *src) != '\0') { dst++; src++; }
-	   } else if (sLen < rLen) {
-	      // move from left to right
-	      int tLen = strlen(sp) - sLen;
-	      char *stop = sp + rLen;
-	      char *src = sp + sLen + tLen;
-	      char *dst = sp + rLen + tLen;
-	      while(dst >= stop) { *dst = *src; dst--; src--; }
-	   }
-	   memcpy(sp, replace, rLen);
-	   count += replaceString(sp + rLen, search, replace);
-	   return count;
-	}
+	// why not call replaceString directly?
+	// call points require the modified string be returned
+	// but replaceString is recursive and depends on its
+	// own return value (but does it need to?)
 	replaceString(str, "'", "'\\''");
 	return str;
 }
@@ -879,7 +1019,7 @@ static void readyResumePath(char* rom_path, int type) {
 	tmp = strrchr(path, '/') + 1;
 	strcpy(rom_file, tmp);
 	
-	sprintf(slot_path, "%s/.minui/%s/%s.txt", SHARED_USERDATA_PATH, emu_name, rom_file); // /.userdata/arm-480/.minui/<EMU>/<romname>.ext.txt
+	sprintf(slot_path, "%s/.minui/%s/%s.txt", SHARED_USERDATA_PATH, emu_name, rom_file); // /.userdata/.minui/<EMU>/<romname>.ext.txt
 	
 	can_resume = exists(slot_path);
 }
@@ -926,9 +1066,9 @@ static int autoResume(void) {
 static void openPak(char* path) {
 	// NOTE: escapeSingleQuotes() modifies the passed string 
 	// so we need to save the path before we call that
-	// if (prefixMatch(ROMS_PATH, path)) {
-	// 	addRecent(path);
-	// }
+	if (prefixMatch(ROMS_PATH, path)) {
+		addRecent(path, NULL);
+	}
 	saveLast(path);
 	
 	char cmd[256];
@@ -988,7 +1128,7 @@ static void openRom(char* path, char* last) {
 	
 	// NOTE: escapeSingleQuotes() modifies the passed string 
 	// so we need to save the path before we call that
-	addRecent(recent_path);
+	addRecent(recent_path, recent_alias); // yiiikes
 	saveLast(last==NULL ? sd_path : last);
 	
 	char cmd[256];
@@ -1043,6 +1183,7 @@ static void closeDirectory(void) {
 }
 
 static void Entry_open(Entry* self) {
+	recent_alias = self->name;  // yiiikes
 	if (self->type==ENTRY_ROM) {
 		char *last = NULL;
 		if (prefixMatch(COLLECTIONS_PATH, top->path)) {
@@ -1157,18 +1298,31 @@ static void Menu_quit(void) {
 ///////////////////////////////////////
 
 int main (int argc, char *argv[]) {
+	// LOG_info("time from launch to:\n");
+	// unsigned long main_begin = SDL_GetTicks();
+	// unsigned long first_draw = 0;
+	
 	if (autoResume()) return 0; // nothing to do
 	
+	simple_mode = exists(SIMPLE_MODE_PATH);
+
 	LOG_info("MinUI\n");
 	InitSettings();
 	
 	SDL_Surface* screen = GFX_init(MODE_MAIN);
+	// LOG_info("- graphics init: %lu\n", SDL_GetTicks() - main_begin);
+	
+	PAD_init();
+	// LOG_info("- input init: %lu\n", SDL_GetTicks() - main_begin);
+	
 	PWR_init();
-	if (!HAS_POWER_BUTTON) PWR_disableSleep();
+	if (!HAS_POWER_BUTTON && !simple_mode) PWR_disableSleep();
+	// LOG_info("- power init: %lu\n", SDL_GetTicks() - main_begin);
 	
 	SDL_Surface* version = NULL;
 	
 	Menu_init();
+	// LOG_info("- menu init: %lu\n", SDL_GetTicks() - main_begin);
 	
 	// now that (most of) the heavy lifting is done, take a load off
 	PWR_setCPUSpeed(CPU_SPEED_MENU);
@@ -1179,6 +1333,8 @@ int main (int argc, char *argv[]) {
 	int show_version = 0;
 	int show_setting = 0; // 1=brightness,2=volume
 	int was_online = PLAT_isOnline();
+	
+	// LOG_info("- loop start: %lu\n", SDL_GetTicks() - main_begin);
 	while (!quit) {
 		GFX_startFrame();
 		unsigned long now = SDL_GetTicks();
@@ -1198,14 +1354,14 @@ int main (int argc, char *argv[]) {
 			if (PAD_justPressed(BTN_B) || PAD_tappedMenu(now)) {
 				show_version = 0;
 				dirty = 1;
-				if (!HAS_POWER_BUTTON) PWR_disableSleep();
+				if (!HAS_POWER_BUTTON && !simple_mode) PWR_disableSleep();
 			}
 		}
 		else {
 			if (PAD_tappedMenu(now)) {
 				show_version = 1;
 				dirty = 1;
-				if (!HAS_POWER_BUTTON) PWR_enableSleep();
+				if (!HAS_POWER_BUTTON && !simple_mode) PWR_enableSleep();
 			}
 			else if (total>0) {
 				if (PAD_justRepeated(BTN_UP)) {
@@ -1332,6 +1488,36 @@ int main (int argc, char *argv[]) {
 			
 			int ox;
 			int oy;
+			
+			// simple thumbnail support a thumbnail for a file or folder named NAME.EXT needs a corresponding /.res/NAME.EXT.png 
+			// that is no bigger than platform FIXED_HEIGHT x FIXED_HEIGHT
+			int had_thumb = 0;
+			if (!show_version && total>0) {
+				Entry* entry = top->entries->items[top->selected];
+				char res_path[MAX_PATH];
+				
+				char res_root[MAX_PATH];
+				strcpy(res_root, entry->path);
+				
+				char tmp_path[MAX_PATH];
+				strcpy(tmp_path, entry->path);
+				char* res_name = strrchr(tmp_path, '/') + 1;
+
+				char* tmp = strrchr(res_root, '/');
+				tmp[0] = '\0';
+				
+				sprintf(res_path, "%s/.res/%s.png", res_root, res_name);
+				LOG_info("res_path: %s\n", res_path);
+				if (exists(res_path)) {
+					had_thumb = 1;
+					SDL_Surface* thumb = IMG_Load(res_path);
+					ox = MAX(FIXED_WIDTH - FIXED_HEIGHT, (FIXED_WIDTH - thumb->w));
+					oy = (FIXED_HEIGHT - thumb->h) / 2;
+					SDL_BlitSurface(thumb, NULL, screen, &(SDL_Rect){ox,oy});
+					SDL_FreeSurface(thumb);
+				}
+			}
+			
 			int ow = GFX_blitHardwareGroup(screen, show_setting);
 			
 			if (show_version) {
@@ -1393,7 +1579,7 @@ int main (int argc, char *argv[]) {
 				SDL_BlitSurface(version, NULL, screen, &(SDL_Rect){(screen->w-version->w)/2,(screen->h-version->h)/2});
 				
 				// buttons (duped and trimmed from below)
-				if (show_setting) GFX_blitHardwareHints(screen, show_setting);
+				if (show_setting && !GetHDMI()) GFX_blitHardwareHints(screen, show_setting);
 				else GFX_blitButtonGroup((char*[]){ BTN_SLEEP==BTN_POWER?"POWER":"MENU","SLEEP",  NULL }, 0, screen, 0);
 				
 				GFX_blitButtonGroup((char*[]){ "B","BACK",  NULL }, 0, screen, 1);
@@ -1406,8 +1592,8 @@ int main (int argc, char *argv[]) {
 						Entry* entry = top->entries->items[i];
 						char* entry_name = entry->name;
 						char* entry_unique = entry->unique;
-						int available_width = screen->w - SCALE1(PADDING * 2);
-						if (i==top->start) available_width -= ow;
+						int available_width = (had_thumb && j!=selected_row ? ox : screen->w) - SCALE1(PADDING * 2);
+						if (i==top->start && !(had_thumb && j!=selected_row)) available_width -= ow; // 
 					
 						SDL_Color text_color = COLOR_WHITE;
 					
@@ -1462,9 +1648,12 @@ int main (int argc, char *argv[]) {
 				}
 			
 				// buttons
-				if (show_setting) GFX_blitHardwareHints(screen, show_setting);
+				if (show_setting && !GetHDMI()) GFX_blitHardwareHints(screen, show_setting);
 				else if (can_resume) GFX_blitButtonGroup((char*[]){ "X","RESUME",  NULL }, 0, screen, 0);
-				else GFX_blitButtonGroup((char*[]){ BTN_SLEEP==BTN_POWER?"POWER":"MENU",BTN_SLEEP==BTN_POWER?"SLEEP":"INFO",  NULL }, 0, screen, 0);
+				else GFX_blitButtonGroup((char*[]){ 
+					BTN_SLEEP==BTN_POWER?"POWER":"MENU",
+					BTN_SLEEP==BTN_POWER||simple_mode?"SLEEP":"INFO",  
+					NULL }, 0, screen, 0);
 			
 				if (total==0) {
 					if (stack->count>1) {
@@ -1485,12 +1674,32 @@ int main (int argc, char *argv[]) {
 			dirty = 0;
 		}
 		else GFX_sync();
+		
+		// if (!first_draw) {
+		// 	first_draw = SDL_GetTicks();
+		// 	LOG_info("- first draw: %lu\n", first_draw - main_begin);
+		// }
+		
+		// handle HDMI change
+		static int had_hdmi = -1;
+		int has_hdmi = GetHDMI();
+		if (had_hdmi==-1) had_hdmi = has_hdmi;
+		if (has_hdmi!=had_hdmi) {
+			had_hdmi = has_hdmi;
+
+			Entry* entry = top->entries->items[top->selected];
+			LOG_info("restarting after HDMI change... (%s)\n", entry->path);
+			saveLast(entry->path); // NOTE: doesn't work in Recents (by design)
+			sleep(4);
+			quit = 1;
+		}
 	}
 	
 	if (version) SDL_FreeSurface(version);
 
 	Menu_quit();
 	PWR_quit();
+	PAD_quit();
 	GFX_quit();
 	QuitSettings();
 }
