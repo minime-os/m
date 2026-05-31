@@ -35,7 +35,6 @@ static int	input_fd = 0;
 static struct input_event ev;
 
 static pthread_t hdmi_pt;
-#define HDMI_STATE_PATH "/sys/class/extcon/hdmi/cable.0/state"
 
 int getInt(char* path) {
 	int i = 0;
@@ -47,16 +46,45 @@ int getInt(char* path) {
 	return i;
 }
 
+static int getHDMIState(void) {
+	char path[256] = "/sys/class/drm/card0-HDMI-A-1/status"; // Default fallback
+	DIR *dir = opendir("/sys/class/drm");
+	if (dir != NULL) {
+		struct dirent *entry;
+		while ((entry = readdir(dir)) != NULL) {
+			if (strstr(entry->d_name, "HDMI") != NULL) {
+				sprintf(path, "/sys/class/drm/%s/status", entry->d_name);
+				break;
+			}
+		}
+		closedir(dir);
+	}
+
+	FILE *file = fopen(path, "r");
+	if (file != NULL) {
+		char status[32] = {0};
+		if (fscanf(file, "%31s", status) == 1) {
+			fclose(file);
+			if (strcmp(status, "connected") == 0) {
+				return 1;
+			}
+		} else {
+			fclose(file);
+		}
+	}
+	return 0;
+}
+
 static void* watchHDMI(void *arg) {
 	int has_hdmi,had_hdmi;
 	
-	has_hdmi = had_hdmi = getInt(HDMI_STATE_PATH);
+	has_hdmi = had_hdmi = getHDMIState();
 	SetHDMI(has_hdmi);
 	
 	while(1) {
 		sleep(1);
 		
-		has_hdmi = getInt(HDMI_STATE_PATH);
+		has_hdmi = getHDMIState();
 		if (had_hdmi!=has_hdmi) {
 			had_hdmi = has_hdmi;
 			SetHDMI(has_hdmi);

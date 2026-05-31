@@ -9,6 +9,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <pthread.h>
+#include <dirent.h>
+#include <string.h>
 
 #include <msettings.h>
 
@@ -380,8 +382,36 @@ int PLAT_shouldWake(void) {
 ///////////////////////////////
 
 // based on rgb30 + tg5040 + m17
-#define HDMI_STATE_PATH "/sys/class/switch/hdmi/cable.0/state" // TODO: can detect but doesn't update automatically
 #define BLANK_PATH "/sys/class/graphics/fb0/blank"
+
+static int getHDMIState(void) {
+	char path[256] = "/sys/class/drm/card0-HDMI-A-1/status"; // Default fallback
+	DIR *dir = opendir("/sys/class/drm");
+	if (dir != NULL) {
+		struct dirent *entry;
+		while ((entry = readdir(dir)) != NULL) {
+			if (strstr(entry->d_name, "HDMI") != NULL) {
+				sprintf(path, "/sys/class/drm/%s/status", entry->d_name);
+				break;
+			}
+		}
+		closedir(dir);
+	}
+
+	FILE *file = fopen(path, "r");
+	if (file != NULL) {
+		char status[32] = {0};
+		if (fscanf(file, "%31s", status) == 1) {
+			fclose(file);
+			if (strcmp(status, "connected") == 0) {
+				return 1;
+			}
+		} else {
+			fclose(file);
+		}
+	}
+	return 0;
+}
 
 static struct VID_Context {
 	SDL_Window* window;
@@ -449,7 +479,7 @@ SDL_Surface* PLAT_initVideo(void) {
 	int w = FIXED_WIDTH;
 	int h = FIXED_HEIGHT;
 	int p = FIXED_PITCH;
-	if (getInt(HDMI_STATE_PATH)) { // can't use getHDMI() from settings because it hasn't be initialized yet
+	if (getHDMIState()) { // can't use getHDMI() from settings because it hasn't be initialized yet
 		w = HDMI_WIDTH;
 		h = HDMI_HEIGHT;
 		p = HDMI_PITCH;

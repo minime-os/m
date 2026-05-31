@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <dlfcn.h>
 #include <string.h>
+#include <dirent.h>
 
 #include "msettings.h"
 
@@ -42,7 +43,6 @@ static int is_host = 0;
 static int shm_size = sizeof(Settings);
 
 #define JACK_STATE_PATH "/sys/module/snd_soc_sunxi_component_jack/parameters/jack_state" // TODO: doesn't change, always 0
-#define HDMI_STATE_PATH "/sys/class/switch/hdmi/cable.0/state"
 
 int getInt(char* path) {
 	int i = 0;
@@ -52,6 +52,35 @@ int getInt(char* path) {
 		fclose(file);
 	}
 	return i;
+}
+
+int getHDMIState(void) {
+	char path[256] = "/sys/class/drm/card0-HDMI-A-1/status"; // Default fallback
+	DIR *dir = opendir("/sys/class/drm");
+	if (dir != NULL) {
+		struct dirent *entry;
+		while ((entry = readdir(dir)) != NULL) {
+			if (strstr(entry->d_name, "HDMI") != NULL) {
+				sprintf(path, "/sys/class/drm/%s/status", entry->d_name);
+				break;
+			}
+		}
+		closedir(dir);
+	}
+
+	FILE *file = fopen(path, "r");
+	if (file != NULL) {
+		char status[32] = {0};
+		if (fscanf(file, "%31s", status) == 1) {
+			fclose(file);
+			if (strcmp(status, "connected") == 0) {
+				return 1;
+			}
+		} else {
+			fclose(file);
+		}
+	}
+	return 0;
 }
 
 void InitSettings(void) {	
@@ -87,7 +116,7 @@ void InitSettings(void) {
 	}
 	
 	int jack = getInt(JACK_STATE_PATH);
-	int hdmi = getInt(HDMI_STATE_PATH);
+	int hdmi = getHDMIState();
 	printf("brightness: %i (hdmi: %i)\nspeaker: %i (jack: %i)\n", settings->brightness, hdmi, settings->speaker, jack); fflush(stdout);
 	
 	// both of these set volume
@@ -150,16 +179,28 @@ void SetVolume(int value) {
 	SaveSettings();
 }
 
-#define DISP_LCD_SET_BRIGHTNESS  0x102
 void SetRawBrightness(int val) { // 0 - 255
 	if (settings->hdmi) return;
 	
 	printf("SetRawBrightness(%i)\n", val); fflush(stdout);
-    int fd = open("/dev/disp", O_RDWR);
-	if (fd) {
-	    unsigned long param[4]={0,val,0,0};
-		ioctl(fd, DISP_LCD_SET_BRIGHTNESS, &param);
-		close(fd);
+
+	char path[256] = "/sys/class/backlight/backlight/brightness"; // Safe default fallback
+	DIR *dir = opendir("/sys/class/backlight");
+	if (dir != NULL) {
+		struct dirent *entry;
+		while ((entry = readdir(dir)) != NULL) {
+			if (entry->d_name[0] != '.') { // Ignore '.' and '..'
+				sprintf(path, "/sys/class/backlight/%s/brightness", entry->d_name);
+				break;
+			}
+		}
+		closedir(dir);
+	}
+
+	FILE *file = fopen(path, "w");
+	if (file != NULL) {
+		fprintf(file, "%d\n", val);
+		fclose(file);
 	}
 }
 void SetRawVolume(int val) { // 0 - 100
