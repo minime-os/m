@@ -438,44 +438,37 @@ static int rotate = 0;
 SDL_Surface* PLAT_initVideo(void) {
 	// LOG_info("PLAT_initVideo\n");
 	
+	int num_drivers = SDL_GetNumVideoDrivers();
+	int has_kmsdrm = 0;
+	int has_mali = 0;
+	int has_fbcon = 0;
+	for (int i = 0; i < num_drivers; i++) {
+		const char* driver_name = SDL_GetVideoDriver(i);
+		if (driver_name) {
+			if (strcmp(driver_name, "kmsdrm") == 0) {
+				has_kmsdrm = 1;
+			} else if (strcmp(driver_name, "mali") == 0) {
+				has_mali = 1;
+			} else if (strcmp(driver_name, "fbcon") == 0 || strcmp(driver_name, "fbdev") == 0) {
+				has_fbcon = 1;
+			}
+		}
+	}
+
+	if (getenv("SDL_VIDEODRIVER") == NULL) {
+		if (has_kmsdrm) {
+			setenv("SDL_VIDEODRIVER", "kmsdrm", 1);
+		} else if (has_mali) {
+			setenv("SDL_VIDEODRIVER", "mali", 1);
+		} else if (has_fbcon) {
+			setenv("SDL_VIDEODRIVER", "fbcon", 1);
+		}
+	}
+	
 	char* model = getenv("RGXX_MODEL"); // TODO: use device?
 	is_cubexx = exactMatch("RGcubexx", model);
 	is_rg34xx = prefixMatch("RG34xx", model);
 	
-	// SDL_version compiled;
-	// SDL_version linked;
-	// SDL_VERSION(&compiled);
-	// SDL_GetVersion(&linked);
-	// LOG_info("Compiled SDL version %d.%d.%d ...\n", compiled.major, compiled.minor, compiled.patch);
-	// LOG_info("Linked SDL version %d.%d.%d.\n", linked.major, linked.minor, linked.patch);
-	//
-	// int num_displays = SDL_GetNumVideoDisplays();
-	// LOG_info("SDL_GetNumVideoDisplays(): %i\n", num_displays);
-	//
-	// LOG_info("Available video drivers:\n");
-	// for (int i=0; i<SDL_GetNumVideoDrivers(); i++) {
-	// 	LOG_info("- %s\n", SDL_GetVideoDriver(i));
-	// }
-	// LOG_info("Current video driver: %s\n", SDL_GetCurrentVideoDriver());
-	//
-	// LOG_info("Available render drivers:\n");
-	// for (int i=0; i<SDL_GetNumRenderDrivers(); i++) {
-	// 	SDL_RendererInfo info;
-	// 	SDL_GetRenderDriverInfo(i,&info);
-	// 	LOG_info("- %s\n", info.name);
-	// }
-	//
-	// LOG_info("Available display modes:\n");
-	// SDL_DisplayMode mode;
-	// for (int i=0; i<SDL_GetNumDisplayModes(0); i++) {
-	// 	SDL_GetDisplayMode(0, i, &mode);
-	// 	LOG_info("- %ix%i (%s)\n", mode.w,mode.h, SDL_GetPixelFormatName(mode.format));
-	// }
-	// SDL_GetCurrentDisplayMode(0, &mode);
-	// LOG_info("Current display mode: %ix%i (%s)\n", mode.w,mode.h, SDL_GetPixelFormatName(mode.format));
-
-	// SDL_SetHint(SDL_HINT_RENDER_VSYNC,"0"); // ignored
-
 	int w = FIXED_WIDTH;
 	int h = FIXED_HEIGHT;
 	int p = FIXED_PITCH;
@@ -486,13 +479,52 @@ SDL_Surface* PLAT_initVideo(void) {
 		on_hdmi = 1;
 	}
 	
-	SDL_InitSubSystem(SDL_INIT_VIDEO);
+	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+		LOG_info("SDL_Init(SDL_INIT_VIDEO) failed: %s\n", SDL_GetError());
+	} else {
+		LOG_info("SDL_Init(SDL_INIT_VIDEO) succeeded\n");
+	}
+
+	SDL_version compiled;
+	SDL_version linked;
+	SDL_VERSION(&compiled);
+	SDL_GetVersion(&linked);
+	LOG_info("Compiled SDL version %d.%d.%d ...\n", compiled.major, compiled.minor, compiled.patch);
+	LOG_info("Linked SDL version %d.%d.%d.\n", linked.major, linked.minor, linked.patch);
+
+	int num_displays = SDL_GetNumVideoDisplays();
+	LOG_info("SDL_GetNumVideoDisplays(): %i\n", num_displays);
+
+	LOG_info("Available video drivers:\n");
+	for (int i=0; i<SDL_GetNumVideoDrivers(); i++) {
+		LOG_info("- %s\n", SDL_GetVideoDriver(i));
+	}
+	LOG_info("Current video driver: %s\n", SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "NONE");
+
+	LOG_info("Available render drivers:\n");
+	for (int i=0; i<SDL_GetNumRenderDrivers(); i++) {
+		SDL_RendererInfo info;
+		SDL_GetRenderDriverInfo(i,&info);
+		LOG_info("- %s\n", info.name);
+	}
+
+	LOG_info("Available display modes:\n");
+	SDL_DisplayMode mode;
+	for (int i=0; i<SDL_GetNumDisplayModes(0); i++) {
+		SDL_GetDisplayMode(0, i, &mode);
+		LOG_info("- %ix%i (%s)\n", mode.w,mode.h, SDL_GetPixelFormatName(mode.format));
+	}
+	if (SDL_GetCurrentDisplayMode(0, &mode) < 0) {
+		LOG_info("SDL_GetCurrentDisplayMode failed: %s\n", SDL_GetError());
+	} else {
+		LOG_info("Current display mode: %ix%i (%s)\n", mode.w,mode.h, SDL_GetPixelFormatName(mode.format));
+	}
+
 	SDL_ShowCursor(0);
 	
 	vid.window   = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, w,h, SDL_WINDOW_SHOWN);
 	// LOG_info("window size: %ix%i\n", w,h);
 	
-	SDL_DisplayMode mode;
 	SDL_GetCurrentDisplayMode(0, &mode);
 	LOG_info("Current display mode: %ix%i (%s)\n", mode.w,mode.h, SDL_GetPixelFormatName(mode.format));
 	if (mode.h>mode.w) rotate = 3; // no longer set on 28xx (because of SDL2 rotation patch?)

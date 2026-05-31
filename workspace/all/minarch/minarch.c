@@ -853,6 +853,8 @@ enum {
 	SHORTCUT_CYCLE_EFFECT,
 	SHORTCUT_TOGGLE_FF,
 	SHORTCUT_HOLD_FF,
+	SHORTCUT_TOGGLE_REWIND,
+	SHORTCUT_HOLD_REWIND,
 	SHORTCUT_COUNT,
 };
 
@@ -1222,6 +1224,8 @@ static void setOverclock(int i) {
 	}
 }
 static int toggle_thread = 0;
+static int bezel_enabled = 0;
+static void Bezel_load(void);
 static void Config_syncFrontend(char* key, int value) {
 	int i = -1;
 	if (exactMatch(key,config.frontend.options[FE_OPT_SCALING].key)) {
@@ -2875,7 +2879,6 @@ static BezelPreset bezel_presets[] = {
 };
 
 static SDL_Surface* bezel_surface = NULL;
-static int bezel_enabled = 0;
 
 static void Bezel_unload(void) {
 	if (bezel_surface) {
