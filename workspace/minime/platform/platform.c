@@ -455,8 +455,28 @@ SDL_Surface* PLAT_initVideo(void) {
 		}
 	}
 
+	int is_h700 = 0;
+	FILE* comp_file = fopen("/proc/device-tree/compatible", "r");
+	if (comp_file) {
+		char comp_str[512] = {0};
+		size_t bytes_read = fread(comp_str, 1, sizeof(comp_str) - 1, comp_file);
+		if (bytes_read > 0) {
+			for (size_t i = 0; i < bytes_read; i++) {
+				if (comp_str[i] == '\0') {
+					comp_str[i] = ' ';
+				}
+			}
+			LOG_info("comp_str: '%s'\n", comp_str);
+			if (strstr(comp_str, "h700") != NULL || strstr(comp_str, "allwinner") != NULL) {
+				is_h700 = 1;
+			}
+		}
+		fclose(comp_file);
+	}
+	LOG_info("is_h700: %d\n", is_h700);
+
 	if (getenv("SDL_VIDEODRIVER") == NULL) {
-		if (has_kmsdrm) {
+		if (has_kmsdrm && !is_h700) {
 			setenv("SDL_VIDEODRIVER", "kmsdrm", 1);
 		} else if (has_mali) {
 			setenv("SDL_VIDEODRIVER", "mali", 1);
