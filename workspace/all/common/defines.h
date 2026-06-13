@@ -11,9 +11,15 @@
 #define MAX_PATH 512
 
 #define ROMS_PATH SDCARD_PATH "/Roms"
+#ifdef MINIME_LAYOUT
+#define ROOT_SYSTEM_PATH SDCARD_PATH "/.ui"
+#define SYSTEM_PATH SDCARD_PATH "/.ui"
+#define RES_PATH SDCARD_PATH "/.ui/res"
+#else
 #define ROOT_SYSTEM_PATH SDCARD_PATH "/.system/"
 #define SYSTEM_PATH SDCARD_PATH "/.system/" PLATFORM
 #define RES_PATH SDCARD_PATH "/.system/res"
+#endif
 #define FONT_PATH RES_PATH "/BPreplayBold-unhinted.otf"
 #define USERDATA_PATH SDCARD_PATH "/.userdata/" PLATFORM
 #define SHARED_USERDATA_PATH SDCARD_PATH "/.userdata/shared"

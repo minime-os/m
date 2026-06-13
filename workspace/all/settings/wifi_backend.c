@@ -7,7 +7,7 @@
 
 #include "wifi_backend.h"
 
-#define WIFI_CONFIG_PATH "/mnt/sdcard/.system/config/wifi.cfg"
+#define WIFI_CONFIG_PATH "/mnt/sdcard/.minime/config/wifi.cfg"
 
 static int wifi_enabled = 0;
 static int wifi_scanning = 0;

@@ -10,7 +10,7 @@ RGXX_MODEL=`strings /mnt/vendor/bin/dmenu.bin | grep ^RG`
 
 FLAG_PATH=$TF1_PATH/.minstalled
 SDCARD_PATH=$TF1_PATH
-SYSTEM_DIR=/.system
+SYSTEM_DIR=/.ui
 SYSTEM_FRAG=$SYSTEM_DIR/rg35xxplus
 UPDATE_FRAG=/MinUI.zip
 SYSTEM_PATH=${SDCARD_PATH}${SYSTEM_FRAG}

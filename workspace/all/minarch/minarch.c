@@ -2898,7 +2898,7 @@ static void Bezel_load(void) {
 	if (strcmp(tag, "FC") == 0) strcpy(tag, "NES");
 	else if (strcmp(tag, "SFC") == 0) strcpy(tag, "SNES");
 	
-	sprintf(bezel_path, "/mnt/sdcard/bezels/%s.png", tag);
+	sprintf(bezel_path, "/mnt/sdcard/.ui/bezels/%s.png", tag);
 	if (!exists(bezel_path)) {
 		char lower_tag[MAX_PATH];
 		strcpy(lower_tag, tag);
@@ -2907,9 +2907,9 @@ static void Bezel_load(void) {
 				lower_tag[i] += 32;
 			}
 		}
-		sprintf(bezel_path, "/mnt/sdcard/bezels/%s.png", lower_tag);
+		sprintf(bezel_path, "/mnt/sdcard/.ui/bezels/%s.png", lower_tag);
 		if (!exists(bezel_path)) {
-			sprintf(bezel_path, "/mnt/sdcard/bezels/%s.png", core.tag);
+			sprintf(bezel_path, "/mnt/sdcard/.ui/bezels/%s.png", core.tag);
 			if (!exists(bezel_path)) {
 				strcpy(lower_tag, core.tag);
 				for (int i = 0; lower_tag[i]; i++) {
@@ -2917,7 +2917,7 @@ static void Bezel_load(void) {
 						lower_tag[i] += 32;
 					}
 				}
-				sprintf(bezel_path, "/mnt/sdcard/bezels/%s.png", lower_tag);
+				sprintf(bezel_path, "/mnt/sdcard/.ui/bezels/%s.png", lower_tag);
 			}
 		}
 	}

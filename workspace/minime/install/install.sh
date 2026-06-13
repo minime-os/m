@@ -2,7 +2,7 @@
 
 TF1_PATH=/mnt/mmc
 TF2_PATH=/mnt/sdcard # TF1 should be linked to this path if TF2 is missing or doesn't contain our system folder
-SYSTEM_PATH=${TF2_PATH}/.system/rg35xxplus
+SYSTEM_PATH=${TF2_PATH}/.ui
 
 # make sure dmenu stays up to date
 echo "update dmenu.bin"
@@ -11,7 +11,7 @@ sync
 
 # --------------------------------------
 # remove old cube system folder
-CUBE_PATH=${TF2_PATH}/.system/rg40xxcube
+CUBE_PATH=${TF2_PATH}/.ui
 echo "check for $CUBE_PATH"
 # this will always exist so we can pull up old cards
 if [ -d $CUBE_PATH ]; then
